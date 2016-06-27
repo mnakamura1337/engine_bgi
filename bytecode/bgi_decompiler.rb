@@ -59,21 +59,19 @@ class BGIDecompiler
     end
   end
 
-  def each
+  def each(&block)
+    @block = block
     @args = []
 
     @b.bytecode.entries.each { |i|
       if i.op_debug_info
-        unless @args.empty?
-          print '??? '
-          output
-        end
+        output('???') unless @args.empty?
+
         o = i.op_debug_info
-        puts if @need_nl
-        printf "0x%06x:<%s:%4d>", i._debug['opcode'][:start] + 0x1c, o.file_name, o.line_num
-        @need_nl = true
+        @cur_addr = i._debug['opcode'][:start] + 0x1c
+        @cur_filename = o.file_name
+        @cur_line_num = o.line_num
       elsif i.op_int
-        #printf "(%d) ", i.op_int.val
         @args << i.op_int.val
       elsif i.op_addr
         @args << Address.new(i.op_addr.val)
@@ -84,33 +82,28 @@ class BGIDecompiler
       elsif i.opcode == 0xe7
         @args << CheckNote.new(@args.pop)
       elsif i.opcode == 0x1a
-        print 'call '
         sub_addr = @args.pop
         sub_name = @sub_by_addr[sub_addr.a]
-        print sub_name ? sub_name : sub_addr.inspect
-        print ' '
-        output
+        output([:call, sub_name ? sub_name : sub_addr.inspect])
       elsif i.op_str
-        #print i.op_str.str.inspect
-        #print ' '
         @args << i.op_str.str.encode('UTF-8')
       elsif BgiBytecode::OPCODES[i.opcode]
         op_sym = BgiBytecode::OPCODES[i.opcode]
         op_name = op_sym.to_s.gsub(/^opcodes_/, '')
-        print "#{op_name} "
-        output
+        output(op_name)
       else
-        printf "@%04x ", i.opcode
-        output
+        output(i.opcode)
       end
     }
 
-    output
+    output('leftover')
   end
 
-  def output
-    puts @args.inspect
-    @need_nl = false
+  def output(op)
+    @block.call(@cur_addr, @cur_filename, @cur_line_num, op, @args)
+    @cur_addr = nil
+    @cur_filename = nil
+    @cur_line_num = nil
     @args = []
   end
 end

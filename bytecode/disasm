@@ -3,4 +3,30 @@
 require_relative 'bgi_decompiler'
 
 d = BGIDecompiler.new(ARGV[0])
-d.each
+d.each { |addr, filename, line_num, op, args|
+  if addr
+    printf "%08x: ", addr
+  else
+    print "........: "
+  end
+
+  printf "%20s:", filename ? filename : "???"
+
+  if line_num
+    printf "%5d", line_num
+  else
+    print "....."
+  end
+
+  print ') '
+
+  if op.is_a?(String)
+    printf "%s ", op
+  elsif op.is_a?(Array)
+    print "call #{op[1]} "
+  else
+    printf "@%04x ", op
+  end
+
+  puts args.inspect
+}
