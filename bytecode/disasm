@@ -2,6 +2,11 @@
 
 require_relative 'bgi_decompiler'
 
+if ARGV.size != 1
+  puts "Usage: disasm <bgi_bytecode_file>"
+  exit 1
+end
+
 d = BGIDecompiler.new(ARGV[0])
 d.each { |addr, filename, line_num, op, args|
   if addr
