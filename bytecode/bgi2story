@@ -1,0 +1,426 @@
+#!/usr/bin/env ruby
+# coding: utf-8
+
+require 'json'
+require 'set'
+
+require_relative 'bgi_bytecode'
+require_relative 'bgi_bytecode_cmds'
+
+class Bgi2StoryConverter
+  def initialize(fn, char_map, voice_map, script_name)
+    @char_map = char_map
+    @voice_map = voice_map
+    @script_name = script_name
+
+    @bytecode = BgiBytecode.from_file(fn)
+    @bytecode._read
+
+    @out = []
+    @imgs = {}
+    @chars = {}
+
+    @voice_seq = {}
+    @layers = Set.new
+  end
+
+  def out
+    {
+      'meta' => {
+        'id' => 'edelweiss_eiden_fantasia',
+        'title' => {
+          'en' => 'Edelweiss Eiden Fantasia',
+          'jp' => 'エーデルワイス 詠伝ファンタジア',
+        },
+        'vndb_id' => 2093,
+        'orig_lang' => 'jp',
+        'asset_path' => 'extracted_eef',
+        'resolution' => {'w' => 800, 'h' => 600},
+      },
+      'imgs' => @imgs,
+      'chars' => @chars,
+      'script' => @out,
+    }
+  end
+
+  def add_cmd(opcode)
+    op = CMD_STR[opcode] || opcode
+
+    case op
+    when 'say' then add_cmd_say
+    when 'bg' then add_cmd_bg
+    when 'bg_transition' then add_cmd_bg_transition
+    when 'sprite' then add_cmd_sprite
+    when 'sprite_hide' then add_cmd_sprite_hide
+    when 'sprite_hide_all' then add_cmd_sprite_hide_all
+    when 'wait' then add_cmd_wait
+    when 'sound' then add_cmd_sound
+    when 'set_script_file' then add_cmd_set_script_file
+    end
+
+    @args = []
+  end
+
+  # [1, 1, 0, " ", "Now, it was finally the day of our date."]
+  def add_cmd_say
+    raise "unable to parse: #{@args.inspect}" unless @args.count == 5 and @args[0] == 1 and @args[1] == 1 and @args[2] == 0
+    _, _, _, char, txt = @args
+
+    if char == ' '
+      @out << {
+        'op' => 'narrate',
+        'txt' => {'en' => txt},
+      }
+    else
+      ch = @char_map[char]
+      raise "unknown character: #{char.inspect}" unless ch
+
+      voice_ch = @voice_map[char]
+      seq = @voice_seq[voice_ch] || 0
+      seq += 1
+      @voice_seq[voice_ch] = seq
+
+      voice_fn = sprintf("voice/%s%s%03d0.ogg", voice_ch, @script_name, seq)
+
+      if txt[0] == '"' and txt[-1] == '"'
+        txt = txt[1..-2]
+        @out << {
+          'op' => 'say',
+          'char' => ch,
+          'txt' => {'en' => txt},
+          'voice' => voice_fn,
+        }
+      elsif txt[0] == '(' and txt[-1] == ')'
+        txt = txt[1..-2]
+        @out << {
+          'op' => 'think',
+          'char' => ch,
+          'txt' => {'en' => txt},
+          'voice' => voice_fn,
+        }
+      else
+        raise "unable to remove quotes: #{txt.inspect}"
+      end
+    end
+
+    @out << {'op' => 'keypress'}
+  end
+
+  def add_cmd_bg
+    expect_arg_count(2)
+    fade_time, fn = @args
+
+    @out << {'op' => 'img', 'layer' => 'bg', 'fn' => "data02000.arc/#{fn}.png"}
+  end
+
+  # [1000, 0, 0, "mask001", "20vacantdlo"]
+  def add_cmd_bg_transition
+    expect_arg_count(5)
+    fade_time, a1, a2, mask_fn, fn = @args
+    (1..2).each { |i| raise "argument #{i} must be 0, it it is #{@args[i]} - see #{@args.inspect}" unless @args[i] == 0 }
+
+    @out << {'op' => 'img', 'layer' => 'bg', 'fn' => "data02000.arc/#{fn}.png"}
+  end
+
+  #sprite [1, 200, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "sak_25_bl_m", 0]
+  def add_cmd_sprite
+    raise "unable to parse: #{@args.inspect}" unless @args.count == 16 or @args.count == 18
+
+    has_lip_sync = @args[0] # 0 or 1
+    timeout = @args[1]
+    z = @args[2]
+
+    (3..12).each { |i| expect_arg(i, 0) }
+
+    x_pos = @args[13]
+
+    if @args.count == 18
+      expect_arg(14, -1)
+      expect_arg(15, :arg22)
+      x_pos = -x_pos
+    end
+
+    fn = @args[-2]
+    layer_id = @args[-1]
+
+    h = {
+      'layer' => layer_id,
+      'fn' => "data02000.arc/#{fn}.png",
+      'x' => x_pos,
+      'z' => z + 100,
+    }
+    
+    if @layers.include?(layer_id)
+      # TODO: enable after implementation of regular images transfading
+      #h['op'] = 'anim'
+      #h['t'] = timeout      
+      h['op'] = 'img'
+      @out << h
+    else
+      h['op'] = 'img'
+      h['a'] = 0
+      @out << h
+      @out << {
+        'op' => 'anim',
+        'layer' => layer_id,
+        'a' => 1,
+        't' => timeout,
+      }
+    end
+
+    @layers << layer_id
+  end
+
+  # [1, 200, 0, 0, 0, 0, 0, 1]
+  def add_cmd_sprite_hide
+    expect_arg_count(8)
+    a0 = @args[0] # 0 or 1
+    timeout = @args[1]
+    (2..6).each { |i| expect_arg(i, 0) }
+    layer_id = @args[7]
+
+    @out << {
+      'op' => 'anim',
+      'layer' => layer_id,
+      'a' => 0,
+      't' => timeout,
+    }
+
+    @layers.delete(layer_id)
+  end
+
+  # [0, 200]
+  def add_cmd_sprite_hide_all
+    raise "unable to parse: #{@args.inspect}" unless @args == [0, 200]
+    timeout = @args[1]
+
+    @layers.each { |layer_id|
+      @out << {
+        'op' => 'anim',
+        'layer' => layer_id,
+        'a' => 0,
+        't' => timeout,
+      }
+    }
+    @layers.clear
+  end
+
+  # [1000]
+  def add_cmd_wait
+    raise "unable to parse: #{@args.inspect}" unless @args.count == 1
+    @out << {'op' => 'wait', 't' => @args[0]}
+  end
+
+  # [2000, 100, "sel0340", 1]
+  # [0, 100, "BGM011", 3]
+  # [0, 100, "bw0010", 1]
+  # [2000, 120, "selp0030", 0]
+  def add_cmd_sound
+    expect_arg_count(4)
+    time_mark, vol, fn, channel = @args
+
+    fn.downcase!
+
+    case fn
+    when /^se[^l]/
+      dst_fn = "se/#{fn}.ogg"
+      is_loop = false
+    else
+      dst_fn = "sound/#{fn}.ogg"
+      is_loop = true
+    end
+
+    @out << {
+      'op' => 'sound_play',
+      'fn' => dst_fn,
+      'loop' => is_loop,
+    }
+  end
+
+  # ["1010", 0]
+  def add_cmd_set_script_file
+    expect_arg_count(2)
+    expect_arg(1, 0)
+    @script_name = @args[0]
+  end
+
+  def expect_arg_count(n)
+    raise "expected #{n} arguments, but there is #{@args.count} - see #{@args.inspect}" unless @args.count == n
+  end
+
+  def expect_arg(i, val)
+    raise "argument #{i} must be #{val.inspect}, it it is #{@args[i].inspect} - see #{@args.inspect}" unless @args[i] == val
+  end
+
+  def run
+    @char_map.each_pair { |name, id|
+      raise "Duplicate character ID: #{id} for #{@chars[id].inspect} and #{name.inspect}" if @chars[id]
+      @chars[id] = {
+        'name' => {'en' => name},
+      }
+    }
+
+    @args = []
+
+    @bytecode.bytecode.entries.each { |i|
+      if i.op_debug_info
+        o = i.op_debug_info
+#        puts if @need_nl
+#        printf "0x%06x:<%s:%4d>", i._debug['opcode'][:start] + 0x1c, o.file_name, o.line_num
+        @need_nl = true
+      elsif i.op_int
+        #printf "(%d) ", i.op_int.val
+        @args << i.op_int.val
+      elsif i.op_addr
+        @args << sprintf("addr=0x%x", i.op_addr.val)
+      elsif i.opcode == 0x22
+        @args << :arg22
+      elsif i.opcode == 2
+        @args << :arg2
+      elsif i.op_str
+        #print i.op_str.str.inspect
+        #print ' '
+        @args << i.op_str.str
+      else
+        add_cmd(i.opcode)
+      end
+    }
+  end
+end
+
+CHAR_MAP = {
+  'Kazushi' => 'kaz',
+
+  'Appo' => 'appo',
+  'Appo ' => 'appo2',
+  'Appo, Pierre, Daigo' => 'appo_pie_dai',
+  'Appo, Pierre, Daigo, Kazushi' => 'appo_pie_dai_kaz',
+  'Old man' => 'old_man_1',
+  'Old Man ' => 'old_man_2',
+  'Old Lady' => 'old_lady',
+  'Old woman' => 'old_woman',
+  'Kazuko' => 'kazu',
+  'Sakura' => 'saku',
+  'Sakura, Ran, Mizuki' => 'saku_ran_mizu', # 'fema',
+  'Johnny' => 'john',
+  'Center' => 'cent',
+  'Daigo' => 'dai',
+  'Natsume' => 'natu',
+  'Panchu' => 'pan',
+  'Pierre' => 'pie',
+  'Poko' => 'poko',
+  'Mizuki' => 'mizu',
+  'Everyone' => 'all',
+  'Andou' => 'ando',
+  'Kazushi, Pierre, Daigo' => 'kaz_pie_dai',
+  'Kazushi, Poko' => 'kaz_poko',
+  'Flowers' => 'flow', # 'saku',
+  'Mei' => 'mei_',
+  'Principal' => 'gaku',
+  'Miya-san' => 'miya',
+  'Kids' => 'kids1',
+  'Kids ' => 'kids2',
+  'Kids and Kazushi' => 'kids_kaz',
+  'Girl 1' => 'girl1',
+  'Girl 1 and 2' => 'girl1_girl2',
+  'Girl 2' => 'girl2',
+  'Witness' => 'wit1',
+  'Witness ' => 'wit2',
+  'Everyone ' => 'fema',
+  'Search Team' => 'st',
+  'Guy' => 'guy',
+  'Four Stooges' => '4st',
+  'Guy 1' => 'guy1',
+  'Guy 2' => 'guy2',
+  'Guy 3' => 'guy3',
+  'Molester' => 'mol1', #'saku',
+  'Molester ' => 'mol2', #'ran_',
+  'Pillar' => 'pill',
+  'Islander' => 'islf',
+  'Islander ' => 'islm',
+  'Yagami' => 'yaga',
+  'Victim' => 'vict', # 'natu',
+  'Sign' => 'sign',
+  'Broadcast' => 'broa', # 'fema',
+  'Haruka' => 'haru',
+  'Ran' => 'ran_',
+  'Rin' => 'rin_',
+  'Rin, Kazushi' => 'rin_kazu' # 'rin_',
+}
+
+VOICE_MAP = {
+  'Appo' => 'appl',
+  'Appo ' => 'saku',
+  'Appo, Pierre, Daigo' => 'male',
+  'Appo, Pierre, Daigo, Kazushi' => 'male',
+  'Old man' => 'male',
+  'Old Man ' => 'male',
+  'Old Lady' => 'fema',
+  'Old woman' => 'fema',
+  'Kazuko' => 'kazu',
+  'Sakura' => 'saku',
+  'Sakura, Ran, Mizuki' => 'fema',
+  'Johnny' => 'male',
+  'Center' => 'male',
+  'Daigo' => 'dai_',
+  'Natsume' => 'natu',
+  'Panchu' => 'pan_',
+  'Pierre' => 'pie_',
+  'Poko' => 'male',
+  'Mizuki' => 'mizu',
+  'Everyone' => 'male',
+  'Andou' => 'ando',
+  'Kazushi, Pierre, Daigo' => 'male',
+  'Kazushi, Poko' => 'male',
+  'Flowers' => 'saku',
+  'Mei' => 'mei_',
+  'Principal' => 'gaku',
+  'Miya-san' => 'miya',
+  'Kids' => 'male',
+  'Kids ' => 'male',
+  'Kids and Kazushi' => 'male',
+  'Girl 1' => 'fema',
+  'Girl 1 and 2' => 'fema',
+  'Girl 2' => 'fema',
+  'Witness' => 'mizu',
+  'Witness ' => 'mei_',
+  'Everyone ' => 'fema',
+  'Search Team' => 'male',
+  'Guy' => 'male',
+  'Four Stooges' => 'male',
+  'Guy 1' => 'male',
+  'Guy 2' => 'male',
+  'Guy 3' => 'male',
+  'Molester' => 'saku',
+  'Molester ' => 'ran_',
+  'Pillar' => 'male',
+  'Islander' => 'fema',
+  'Islander ' => 'male',
+  'Yagami' => 'yaga',
+  'Victim' => 'natu',
+  'Sign' => 'male',
+  'Broadcast' => 'fema',
+  'Haruka' => 'haru',
+  'Ran' => 'ran_',
+  'Rin' => 'rin_',
+  'Rin, Kazushi' => 'rin_',
+}
+
+#b = Bgi2StoryConverter.new('makerlogo')
+#b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/main')
+#b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/0010')
+#b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/0022')
+#b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/0030')
+#b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/1010')
+#b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/1011')
+#b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/1012')
+#b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/1013')
+cnv = Bgi2StoryConverter.new('src/data01000.arc/1010', CHAR_MAP, VOICE_MAP, nil)
+#cnv = Bgi2StoryConverter.new('src/data01000.arc/1014', CHAR_MAP, VOICE_MAP, '1010')
+
+cnv.run
+
+File.open('3.js', 'w') { |out|
+  out.print "program = "
+  out.puts JSON.pretty_generate(cnv.out)
+}
