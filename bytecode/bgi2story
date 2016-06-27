@@ -149,11 +149,11 @@ class Bgi2StoryConverter
       'x' => x_pos,
       'z' => z + 100,
     }
-    
+
     if @layers.include?(layer_id)
       # TODO: enable after implementation of regular images transfading
       #h['op'] = 'anim'
-      #h['t'] = timeout      
+      #h['t'] = timeout
       h['op'] = 'img'
       @out << h
     else
