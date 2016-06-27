@@ -2,7 +2,6 @@
 
 require_relative 'bgi_compiled_script'
 require_relative 'bgi_bytecode'
-require_relative 'bgi_bytecode_cmds'
 
 class CheckNote
   attr_reader :cond_id
@@ -110,9 +109,10 @@ b.bytecode.entries.each { |i|
     #print i.op_str.str.inspect
     #print ' '
     @args << i.op_str.str.encode('UTF-8')
-  elsif CMD_STR[i.opcode]
-    print CMD_STR[i.opcode]
-    print ' '
+  elsif BgiBytecode::OPCODES[i.opcode]
+    op_sym = BgiBytecode::OPCODES[i.opcode]
+    op_name = op_sym.to_s.gsub(/^opcodes_/, '')
+    print "#{op_name} "
     output
   else
     printf "@%04x ", i.opcode
