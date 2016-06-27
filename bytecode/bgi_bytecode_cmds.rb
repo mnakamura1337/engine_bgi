@@ -22,6 +22,7 @@ CMD_STR = {
   0x185 => 'img_hide', # [1, 1500, 3]
   0x186 => 'fx_smth1', # [2000, 50, 0]
   0x1a0 => 'sound_1a0', # [64, 120, "se2080", 5]
+  0x1b1 => 'cmd0x1b1', # []
   0x1b2 => 'char_act', # ["Rin"]
   0x1b4 => 'set_script_file', # ["1010", 0]
   0x1b6 => 'set_voice_seq', # [2, "Kazushi, Pierre, Daigo"] or [64, "Sakura"] or [53, "Pierre"]
@@ -37,5 +38,4 @@ CMD_STR = {
   0x230 => 'cmd0x230', # [0, 30, 4, 5, 20, 245]
                        # [0, 3, 2, 5, 20, 245]
   0x340 => 'cmd0x340', # [1, 500, 200]
-  0x1b1 => 'cmd0x1b1', # []
 }
