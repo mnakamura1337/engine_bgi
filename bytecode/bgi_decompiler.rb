@@ -96,7 +96,7 @@ class BGIDecompiler
       end
     }
 
-    output('leftover')
+    output('leftover') unless @args.empty?
   end
 
   def output(op)
