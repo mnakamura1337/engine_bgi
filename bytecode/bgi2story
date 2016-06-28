@@ -1,22 +1,25 @@
 #!/usr/bin/env ruby
 # coding: utf-8
 
+require 'yaml'
 require 'json'
 require 'set'
 
 require_relative 'bgi_decompiler'
 
+require_relative 'converter_common'
+
 class Bgi2StoryConverter
-  def initialize(fn, char_map, voice_map, script_name)
-    @char_map = char_map
-    @voice_map = voice_map
+  include ExplicitChars
+
+  def initialize(fn, chars, script_name)
+    @chars = chars
     @script_name = script_name
 
     @decom = BGIDecompiler.new(fn)
 
     @out = []
     @imgs = {}
-    @chars = {}
 
     @voice_seq = {}
     @layers = Set.new
@@ -50,12 +53,6 @@ class Bgi2StoryConverter
   end
 
   def run
-    @char_map.each_pair { |name, id|
-      raise "Duplicate character ID: #{id} for #{@chars[id].inspect} and #{name.inspect}" if @chars[id]
-      @chars[id] = {
-        'name' => {'en' => name},
-      }
-    }
 
     @decom.each { |addr, filename, line_num, op, args|
       # Convert Mul(x, -1) to just "-x"
@@ -74,6 +71,10 @@ class Bgi2StoryConverter
     }
   end
 
+  def op_call(sub_name, args)
+    warn "op_call: #{sub_name} #{args.inspect}"
+  end
+  
   # [1, 1, 0, " ", "Now, it was finally the day of our date."]
   def op_say(args)
     expect_arg_count(args, 5)
@@ -82,23 +83,25 @@ class Bgi2StoryConverter
     expect_arg(args, 2, 0)
     _, _, _, char, txt = args
 
-    if char == ' '
+    # ' ' is used as narrator in Edelweiss Eiden Fantasia
+    # 0 is used as narrator in Aiyoku no Eustia
+    if char == ' ' or char == 0
       @out << {
         'op' => 'narrate',
         'txt' => {'en' => txt},
       }
     else
-      ch = @char_map[char]
-      raise "unknown character: #{char.inspect}" unless ch
+      ch = get_char_by_name(char)
+      raise "unknown character: #{char.inspect}, got #{orig_to_char.inspect}" unless ch
 
-      voice_ch = @voice_map[char]
+      voice_ch = ch['voice']
       seq = @voice_seq[voice_ch] || 0
       seq += 1
       @voice_seq[voice_ch] = seq
 
       voice_fn = sprintf("voice/%s%s%03d0.ogg", voice_ch, @script_name, seq)
 
-      if txt[0] == '"' and txt[-1] == '"'
+      if (txt[0] == '"' and txt[-1] == '"') or (txt[0] == '「' and txt[-1] == '」')
         txt = txt[1..-2]
         @out << {
           'op' => 'say',
@@ -263,139 +266,18 @@ class Bgi2StoryConverter
   end
 end
 
-CHAR_MAP = {
-  'Kazushi' => 'kaz',
+if ARGV.size != 3
+  puts "Usage: bgi2story <characters.yaml> <in_script> <out_story>"
+  exit 1
+end
 
-  'Appo' => 'appo',
-  'Appo ' => 'appo2',
-  'Appo, Pierre, Daigo' => 'appo_pie_dai',
-  'Appo, Pierre, Daigo, Kazushi' => 'appo_pie_dai_kaz',
-  'Old man' => 'old_man_1',
-  'Old Man ' => 'old_man_2',
-  'Old Lady' => 'old_lady',
-  'Old woman' => 'old_woman',
-  'Kazuko' => 'kazu',
-  'Sakura' => 'saku',
-  'Sakura, Ran, Mizuki' => 'saku_ran_mizu', # 'fema',
-  'Johnny' => 'john',
-  'Center' => 'cent',
-  'Daigo' => 'dai',
-  'Natsume' => 'natu',
-  'Panchu' => 'pan',
-  'Pierre' => 'pie',
-  'Poko' => 'poko',
-  'Mizuki' => 'mizu',
-  'Everyone' => 'all',
-  'Andou' => 'ando',
-  'Kazushi, Pierre, Daigo' => 'kaz_pie_dai',
-  'Kazushi, Poko' => 'kaz_poko',
-  'Flowers' => 'flow', # 'saku',
-  'Mei' => 'mei_',
-  'Principal' => 'gaku',
-  'Miya-san' => 'miya',
-  'Kids' => 'kids1',
-  'Kids ' => 'kids2',
-  'Kids and Kazushi' => 'kids_kaz',
-  'Girl 1' => 'girl1',
-  'Girl 1 and 2' => 'girl1_girl2',
-  'Girl 2' => 'girl2',
-  'Witness' => 'wit1',
-  'Witness ' => 'wit2',
-  'Everyone ' => 'fema',
-  'Search Team' => 'st',
-  'Guy' => 'guy',
-  'Four Stooges' => '4st',
-  'Guy 1' => 'guy1',
-  'Guy 2' => 'guy2',
-  'Guy 3' => 'guy3',
-  'Molester' => 'mol1', #'saku',
-  'Molester ' => 'mol2', #'ran_',
-  'Pillar' => 'pill',
-  'Islander' => 'islf',
-  'Islander ' => 'islm',
-  'Yagami' => 'yaga',
-  'Victim' => 'vict', # 'natu',
-  'Sign' => 'sign',
-  'Broadcast' => 'broa', # 'fema',
-  'Haruka' => 'haru',
-  'Ran' => 'ran_',
-  'Rin' => 'rin_',
-  'Rin, Kazushi' => 'rin_kazu' # 'rin_',
-}
+chars_fn, in_script, out_story = ARGV
 
-VOICE_MAP = {
-  'Appo' => 'appl',
-  'Appo ' => 'saku',
-  'Appo, Pierre, Daigo' => 'male',
-  'Appo, Pierre, Daigo, Kazushi' => 'male',
-  'Old man' => 'male',
-  'Old Man ' => 'male',
-  'Old Lady' => 'fema',
-  'Old woman' => 'fema',
-  'Kazuko' => 'kazu',
-  'Sakura' => 'saku',
-  'Sakura, Ran, Mizuki' => 'fema',
-  'Johnny' => 'male',
-  'Center' => 'male',
-  'Daigo' => 'dai_',
-  'Natsume' => 'natu',
-  'Panchu' => 'pan_',
-  'Pierre' => 'pie_',
-  'Poko' => 'male',
-  'Mizuki' => 'mizu',
-  'Everyone' => 'male',
-  'Andou' => 'ando',
-  'Kazushi, Pierre, Daigo' => 'male',
-  'Kazushi, Poko' => 'male',
-  'Flowers' => 'saku',
-  'Mei' => 'mei_',
-  'Principal' => 'gaku',
-  'Miya-san' => 'miya',
-  'Kids' => 'male',
-  'Kids ' => 'male',
-  'Kids and Kazushi' => 'male',
-  'Girl 1' => 'fema',
-  'Girl 1 and 2' => 'fema',
-  'Girl 2' => 'fema',
-  'Witness' => 'mizu',
-  'Witness ' => 'mei_',
-  'Everyone ' => 'fema',
-  'Search Team' => 'male',
-  'Guy' => 'male',
-  'Four Stooges' => 'male',
-  'Guy 1' => 'male',
-  'Guy 2' => 'male',
-  'Guy 3' => 'male',
-  'Molester' => 'saku',
-  'Molester ' => 'ran_',
-  'Pillar' => 'male',
-  'Islander' => 'fema',
-  'Islander ' => 'male',
-  'Yagami' => 'yaga',
-  'Victim' => 'natu',
-  'Sign' => 'male',
-  'Broadcast' => 'fema',
-  'Haruka' => 'haru',
-  'Ran' => 'ran_',
-  'Rin' => 'rin_',
-  'Rin, Kazushi' => 'rin_',
-}
-
-#b = Bgi2StoryConverter.new('makerlogo')
-#b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/main')
-#b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/0010')
-#b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/0022')
-#b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/0030')
-cnv = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/1010', CHAR_MAP, VOICE_MAP, nil)
-#b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/1011')
-#b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/1012')
-#b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/1013')
-#cnv = Bgi2StoryConverter.new('src/data01000.arc/1010', CHAR_MAP, VOICE_MAP, nil)
-#cnv = Bgi2StoryConverter.new('src/data01000.arc/1014', CHAR_MAP, VOICE_MAP, '1010')
+cnv = Bgi2StoryConverter.new(in_script, YAML.load(File.read(chars_fn)), nil)
 
 cnv.run
 
-File.open('3.js', 'w') { |out|
+File.open(out_story, 'w') { |out|
   out.print "program = "
   out.puts JSON.pretty_generate(cnv.out)
 }
