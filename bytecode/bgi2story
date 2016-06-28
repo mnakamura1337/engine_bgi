@@ -4,8 +4,7 @@
 require 'json'
 require 'set'
 
-require_relative 'bgi_bytecode'
-require_relative 'bgi_bytecode_cmds'
+require_relative 'bgi_decompiler'
 
 class Bgi2StoryConverter
   def initialize(fn, char_map, voice_map, script_name)
@@ -13,8 +12,7 @@ class Bgi2StoryConverter
     @voice_map = voice_map
     @script_name = script_name
 
-    @bytecode = BgiBytecode.from_file(fn)
-    @bytecode._read
+    @decom = BGIDecompiler.new(fn)
 
     @out = []
     @imgs = {}
@@ -43,28 +41,46 @@ class Bgi2StoryConverter
     }
   end
 
-  def add_cmd(opcode)
-    op = CMD_STR[opcode] || opcode
-
-    case op
-    when 'say' then add_cmd_say
-    when 'bg' then add_cmd_bg
-    when 'bg_transition' then add_cmd_bg_transition
-    when 'sprite' then add_cmd_sprite
-    when 'sprite_hide' then add_cmd_sprite_hide
-    when 'sprite_hide_all' then add_cmd_sprite_hide_all
-    when 'wait' then add_cmd_wait
-    when 'sound' then add_cmd_sound
-    when 'set_script_file' then add_cmd_set_script_file
+  def simplify(v)
+    if v.is_a?(BGIDecompiler::Mul)
+      simplify(v.a1) * simplify(v.a2)
+    else
+      v
     end
+  end
 
-    @args = []
+  def run
+    @char_map.each_pair { |name, id|
+      raise "Duplicate character ID: #{id} for #{@chars[id].inspect} and #{name.inspect}" if @chars[id]
+      @chars[id] = {
+        'name' => {'en' => name},
+      }
+    }
+
+    @decom.each { |addr, filename, line_num, op, args|
+      # Convert Mul(x, -1) to just "-x"
+      args.map! { |a| simplify(a) }
+
+      if op.is_a?(String)
+        meth_name = "op_#{op}"
+        if respond_to?(meth_name)
+          send(meth_name, args)
+        else
+          warn "not implemented: #{meth_name} #{args.inspect}"
+        end
+      elsif op.is_a?(Array)
+        op_call(op[1], args)
+      end
+    }
   end
 
   # [1, 1, 0, " ", "Now, it was finally the day of our date."]
-  def add_cmd_say
-    raise "unable to parse: #{@args.inspect}" unless @args.count == 5 and @args[0] == 1 and @args[1] == 1 and @args[2] == 0
-    _, _, _, char, txt = @args
+  def op_say(args)
+    expect_arg_count(args, 5)
+    expect_arg(args, 0, 1)
+    expect_arg(args, 1, 1)
+    expect_arg(args, 2, 0)
+    _, _, _, char, txt = args
 
     if char == ' '
       @out << {
@@ -106,42 +122,36 @@ class Bgi2StoryConverter
     @out << {'op' => 'keypress'}
   end
 
-  def add_cmd_bg
-    expect_arg_count(2)
-    fade_time, fn = @args
+  def op_bg(args)
+    expect_arg_count(args, 2)
+    fade_time, fn = args
 
     @out << {'op' => 'img', 'layer' => 'bg', 'fn' => "data02000.arc/#{fn}.png"}
   end
 
   # [1000, 0, 0, "mask001", "20vacantdlo"]
-  def add_cmd_bg_transition
-    expect_arg_count(5)
-    fade_time, a1, a2, mask_fn, fn = @args
-    (1..2).each { |i| raise "argument #{i} must be 0, it it is #{@args[i]} - see #{@args.inspect}" unless @args[i] == 0 }
+  def op_bg_transition(args)
+    expect_arg_count(args, 5)
+    fade_time, a1, a2, mask_fn, fn = args
+    (1..2).each { |i| expect_arg(args, i, 0) }
 
     @out << {'op' => 'img', 'layer' => 'bg', 'fn' => "data02000.arc/#{fn}.png"}
   end
 
   #sprite [1, 200, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "sak_25_bl_m", 0]
-  def add_cmd_sprite
-    raise "unable to parse: #{@args.inspect}" unless @args.count == 16 or @args.count == 18
+  def op_sprite(args)
+    expect_arg_count(args, 16)
 
-    has_lip_sync = @args[0] # 0 or 1
-    timeout = @args[1]
-    z = @args[2]
+    has_lip_sync = args[0] # 0 or 1
+    timeout = args[1]
+    z = args[2]
 
-    (3..12).each { |i| expect_arg(i, 0) }
+    (3..12).each { |i| expect_arg(args, i, 0) }
 
-    x_pos = @args[13]
+    x_pos = args[13]
 
-    if @args.count == 18
-      expect_arg(14, -1)
-      expect_arg(15, :arg22)
-      x_pos = -x_pos
-    end
-
-    fn = @args[-2]
-    layer_id = @args[-1]
+    fn = args[-2]
+    layer_id = args[-1]
 
     h = {
       'layer' => layer_id,
@@ -172,12 +182,12 @@ class Bgi2StoryConverter
   end
 
   # [1, 200, 0, 0, 0, 0, 0, 1]
-  def add_cmd_sprite_hide
-    expect_arg_count(8)
-    a0 = @args[0] # 0 or 1
-    timeout = @args[1]
-    (2..6).each { |i| expect_arg(i, 0) }
-    layer_id = @args[7]
+  def op_sprite_hide(args)
+    expect_arg_count(args, 8)
+    a0 = args[0] # 0 or 1
+    timeout = args[1]
+    (2..6).each { |i| expect_arg(args, i, 0) }
+    layer_id = args[7]
 
     @out << {
       'op' => 'anim',
@@ -190,9 +200,9 @@ class Bgi2StoryConverter
   end
 
   # [0, 200]
-  def add_cmd_sprite_hide_all
-    raise "unable to parse: #{@args.inspect}" unless @args == [0, 200]
-    timeout = @args[1]
+  def op_sprite_hide_all(args)
+    raise "unable to parse: #{args.inspect}" unless args == [0, 200]
+    timeout = args[1]
 
     @layers.each { |layer_id|
       @out << {
@@ -206,18 +216,18 @@ class Bgi2StoryConverter
   end
 
   # [1000]
-  def add_cmd_wait
-    raise "unable to parse: #{@args.inspect}" unless @args.count == 1
-    @out << {'op' => 'wait', 't' => @args[0]}
+  def op_wait(args)
+    expect_arg_count(args, 1)
+    @out << {'op' => 'wait', 't' => args[0]}
   end
 
   # [2000, 100, "sel0340", 1]
   # [0, 100, "BGM011", 3]
   # [0, 100, "bw0010", 1]
   # [2000, 120, "selp0030", 0]
-  def add_cmd_sound
-    expect_arg_count(4)
-    time_mark, vol, fn, channel = @args
+  def op_sound(args)
+    expect_arg_count(args, 4)
+    time_mark, vol, fn, channel = args
 
     fn.downcase!
 
@@ -238,53 +248,18 @@ class Bgi2StoryConverter
   end
 
   # ["1010", 0]
-  def add_cmd_set_script_file
-    expect_arg_count(2)
-    expect_arg(1, 0)
-    @script_name = @args[0]
+  def op_set_script_file(args)
+    expect_arg_count(args, 2)
+    expect_arg(args, 1, 0)
+    @script_name = args[0]
   end
 
-  def expect_arg_count(n)
-    raise "expected #{n} arguments, but there is #{@args.count} - see #{@args.inspect}" unless @args.count == n
+  def expect_arg_count(args, n)
+    raise "expected #{n} arguments, but there is #{args.count} - see #{args.inspect}" unless args.count == n
   end
 
-  def expect_arg(i, val)
-    raise "argument #{i} must be #{val.inspect}, it it is #{@args[i].inspect} - see #{@args.inspect}" unless @args[i] == val
-  end
-
-  def run
-    @char_map.each_pair { |name, id|
-      raise "Duplicate character ID: #{id} for #{@chars[id].inspect} and #{name.inspect}" if @chars[id]
-      @chars[id] = {
-        'name' => {'en' => name},
-      }
-    }
-
-    @args = []
-
-    @bytecode.bytecode.entries.each { |i|
-      if i.op_debug_info
-        o = i.op_debug_info
-#        puts if @need_nl
-#        printf "0x%06x:<%s:%4d>", i._debug['opcode'][:start] + 0x1c, o.file_name, o.line_num
-        @need_nl = true
-      elsif i.op_int
-        #printf "(%d) ", i.op_int.val
-        @args << i.op_int.val
-      elsif i.op_addr
-        @args << sprintf("addr=0x%x", i.op_addr.val)
-      elsif i.opcode == 0x22
-        @args << :arg22
-      elsif i.opcode == 2
-        @args << :arg2
-      elsif i.op_str
-        #print i.op_str.str.inspect
-        #print ' '
-        @args << i.op_str.str
-      else
-        add_cmd(i.opcode)
-      end
-    }
+  def expect_arg(args, i, val)
+    raise "argument #{i} must be #{val.inspect}, it it is #{args[i].inspect} - see #{args.inspect}" unless args[i] == val
   end
 end
 
@@ -411,11 +386,11 @@ VOICE_MAP = {
 #b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/0010')
 #b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/0022')
 #b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/0030')
-#b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/1010')
+cnv = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/1010', CHAR_MAP, VOICE_MAP, nil)
 #b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/1011')
 #b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/1012')
 #b = Bgi2StoryConverter.new('extracted.d/eef/data01000.arc/1013')
-cnv = Bgi2StoryConverter.new('src/data01000.arc/1010', CHAR_MAP, VOICE_MAP, nil)
+#cnv = Bgi2StoryConverter.new('src/data01000.arc/1010', CHAR_MAP, VOICE_MAP, nil)
 #cnv = Bgi2StoryConverter.new('src/data01000.arc/1014', CHAR_MAP, VOICE_MAP, '1010')
 
 cnv.run
