@@ -12,7 +12,8 @@ require_relative 'converter_common'
 class Bgi2StoryConverter
   include ExplicitChars
 
-  def initialize(fn, chars, script_name)
+  def initialize(fn, meta, chars, script_name)
+    @meta = meta
     @chars = chars
     @script_name = script_name
 
@@ -27,17 +28,7 @@ class Bgi2StoryConverter
 
   def out
     {
-      'meta' => {
-        'id' => 'edelweiss_eiden_fantasia',
-        'title' => {
-          'en' => 'Edelweiss Eiden Fantasia',
-          'jp' => 'エーデルワイス 詠伝ファンタジア',
-        },
-        'vndb_id' => 2093,
-        'orig_lang' => 'jp',
-        'asset_path' => 'extracted_eef',
-        'resolution' => {'w' => 800, 'h' => 600},
-      },
+      'meta' => @meta,
       'imgs' => @imgs,
       'chars' => @chars,
       'script' => @out,
@@ -266,14 +257,19 @@ class Bgi2StoryConverter
   end
 end
 
-if ARGV.size != 3
-  puts "Usage: bgi2story <characters.yaml> <in_script> <out_story>"
+if ARGV.size != 4
+  puts "Usage: bgi2story <meta.yaml> <characters.yaml> <in_script> <out_story>"
   exit 1
 end
 
-chars_fn, in_script, out_story = ARGV
+meta_fn, chars_fn, in_script, out_story = ARGV
 
-cnv = Bgi2StoryConverter.new(in_script, YAML.load(File.read(chars_fn)), nil)
+cnv = Bgi2StoryConverter.new(
+  in_script,
+  YAML.load(File.read(meta_fn)),
+  YAML.load(File.read(chars_fn)),
+  nil
+)
 
 cnv.run
 
