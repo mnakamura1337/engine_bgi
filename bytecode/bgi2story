@@ -12,9 +12,10 @@ require_relative 'converter_common'
 class Bgi2StoryConverter
   include ExplicitChars
 
-  def initialize(fn, meta, chars, script_name)
+  def initialize(fn, meta, chars, lang, script_name)
     @meta = meta
     @chars = chars
+    @lang = lang
     @script_name = script_name
 
     @decom = BGIDecompiler.new(fn)
@@ -79,7 +80,7 @@ class Bgi2StoryConverter
     if char == ' ' or char == 0
       @out << {
         'op' => 'narrate',
-        'txt' => {'en' => txt},
+        'txt' => {@lang => txt},
       }
     else
       ch = get_char_by_name(char)
@@ -97,7 +98,7 @@ class Bgi2StoryConverter
         @out << {
           'op' => 'say',
           'char' => ch,
-          'txt' => {'en' => txt},
+          'txt' => {@lang => txt},
           'voice' => voice_fn,
         }
       elsif txt[0] == '(' and txt[-1] == ')'
@@ -105,7 +106,7 @@ class Bgi2StoryConverter
         @out << {
           'op' => 'think',
           'char' => ch,
-          'txt' => {'en' => txt},
+          'txt' => {@lang => txt},
           'voice' => voice_fn,
         }
       else
@@ -257,17 +258,18 @@ class Bgi2StoryConverter
   end
 end
 
-if ARGV.size != 4
-  puts "Usage: bgi2story <meta.yaml> <characters.yaml> <in_script> <out_story>"
+if ARGV.size != 5
+  puts "Usage: bgi2story <meta.yaml> <characters.yaml> <lang> <in_script> <out_story>"
   exit 1
 end
 
-meta_fn, chars_fn, in_script, out_story = ARGV
+meta_fn, chars_fn, lang, in_script, out_story = ARGV
 
 cnv = Bgi2StoryConverter.new(
   in_script,
   YAML.load(File.read(meta_fn)),
   YAML.load(File.read(chars_fn)),
+  lang,
   nil
 )
 
