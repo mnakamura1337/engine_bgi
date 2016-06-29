@@ -153,6 +153,8 @@ class Bgi2StoryConverter
       'op' => 'img',
       'layer' => 'face',
       'fn' => get_img_file(sprintf("face_%06d.png", num)),
+      'x' => -150, # roughly centered
+      'y' => -80,  # ($face_h = 280) - (face_* height = 360)
     }
   end
 
