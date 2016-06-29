@@ -1,0 +1,36 @@
+#!/usr/bin/env ruby
+
+require 'fileutils'
+require_relative 'bgi_bw_ogg'
+
+def extract_ogg(src_dir, fn, dst_dir)
+  b = BgiBwOgg.from_file("#{src_dir}/#{fn}")
+  FileUtils::mkdir_p(dst_dir)
+  File.open("#{dst_dir}/#{fn}.ogg", 'w') { |f| f.write(b.body) }
+end
+
+def extract_ogg_dir(src_dir, dst_dir)
+  src_glob = "#{src_dir}/*"
+
+  Dir.glob(src_glob).each { |src_fn|
+    fn = File.basename(src_fn)
+    next if fn[-1] == '+'
+    puts "#{src_fn.inspect} => #{dst_dir.inspect}"
+    extract_ogg(src_dir, fn, dst_dir)
+  }
+end
+
+if ARGV.size != 2
+  puts "Usage: extract_oggs <src_dir> <dest_dir>"
+  exit 1
+end
+
+extract_ogg_dir(ARGV[0], ARGV[1])
+
+#extract_ogg_dir('extracted/eef/data03000.arc/*', 'extracted.s/eef/fx')
+#extract_ogg_dir('extracted/eef/data04000.arc/*', 'extracted.s/eef/voice')
+#extract_ogg_dir('extracted/eef/data05000.arc/*', 'extracted.s/eef/sound')
+
+#extract_ogg('extracted/eef/data04000.arc', 'ando20100020', 'extracted.s/eef/voice')
+#extract_ogg('extracted/eef/data05000.arc', 'sel0070', 'extracted.s/eef/sel')
+#extract_ogg('extracted/eef/data03000.arc', 'se0320', 'extracted.s/eef/se')
