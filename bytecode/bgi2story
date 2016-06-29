@@ -4,6 +4,7 @@
 require 'yaml'
 require 'json'
 require 'set'
+require 'find'
 
 require_relative 'bgi_decompiler'
 
@@ -12,7 +13,7 @@ require_relative 'converter_common'
 class Bgi2StoryConverter
   include ExplicitChars
 
-  def initialize(fn, meta, chars, lang, script_name)
+  def initialize(fn, meta, chars, lang, script_name, asset_dir)
     @meta = meta
     @chars = chars
     @lang = lang
@@ -23,8 +24,18 @@ class Bgi2StoryConverter
     @out = []
     @imgs = {}
 
+    @voice_fn = nil
     @voice_seq = {}
     @layers = Set.new
+
+    # Gather list of images in all asset dirs
+    @img_to_fn = {}
+    Find.find(asset_dir) { |fn|
+      next unless fn =~ /\.png$/
+      path = fn[(asset_dir.length + 1)..-1]
+      imgname = File.basename(path)
+      @img_to_fn[imgname] = path
+    }
   end
 
   def out
@@ -45,7 +56,6 @@ class Bgi2StoryConverter
   end
 
   def run
-
     @decom.each { |addr, filename, line_num, op, args|
       # Convert Mul(x, -1) to just "-x"
       args.map! { |a| simplify(a) }
@@ -64,9 +74,99 @@ class Bgi2StoryConverter
   end
 
   def op_call(sub_name, args)
-    warn "op_call: #{sub_name} #{args.inspect}"
+    case sub_name
+    when 'Back'
+      # Back [3563, 5]
+      bg_name = sprintf("data02700.arc/bg_%04d.png", args[0])
+      @out << {
+        'op' => 'img',
+        'layer' => 'bg',
+        'fn' => bg_name,
+      }
+    when 'BgmNo', 'BgmPlay'
+      # BgmNo [1, 304, 5]
+      # BgmPlay [1, 402, 5]
+      channel, bgm_num, _ = args
+      @out << {
+        'op' => 'sound_play',
+        'channel' => "music#{channel}",
+        'fn' => sprintf("music/bgm_%04d_loop.ogg", bgm_num),
+        'loop' => true,
+      }
+    when 'BgmStop'
+      # BgmStop [1, 5]
+      channel, _ = args
+      @out << {
+        'op' => 'sound_stop',
+        'channel' => "music#{channel}",
+      }
+    when 'Voice'
+      # Voice ["aiy010000010"]
+      @voice_fn = "voice/#{args[0]}.ogg"
+    when 'SEPlay'
+      # SEPlay [1, 3540, 5]
+      channel, fx_num, _ = args
+      @out << {
+        'op' => 'sound_play',
+        'channel' => "fx#{channel}",
+        'fn' => sprintf("fx/%05d.ogg", fx_num),
+      }
+    when 'SEStop'
+      # SEStop [1, 5]
+      channel, _ = args
+      @out << {
+        'op' => 'sound_stop',
+        'channel' => "fx#{channel}",
+      }
+    when 'Face'
+      # Face [20106]
+      put_face(args[0])
+    when 'ClrFace'
+      @out << {
+        'op' => 'img',
+        'layer' => 'face',
+        'fn' => '',
+      }
+    when 'Tati'
+      # Tati [430101, 1, 0, 1, 1]
+      img_num, layer, xpos, _, _ = args
+      put_sprite(img_num, layer, xpos)
+    when 'TatiFa'
+      # TatiFa [20142, 1, 0, 1, 1]
+      img_num, layer, xpos, _, _ = args
+      put_face(img_num)
+      put_sprite(img_num, layer, xpos)
+    when 'ClrTati'
+      # ClrTati [1]
+      @out << {
+        'op' => 'img',
+        'layer' => "spr#{args[0]}",
+        'fn' => '',
+      }
+    else
+      warn "op_call: #{sub_name} #{args.inspect}"
+    end
   end
-  
+
+  def put_face(num)
+    @out << {
+      'op' => 'img',
+      'layer' => 'face',
+      'fn' => get_img_file(sprintf("face_%06d.png", num)),
+    }
+  end
+
+  def put_sprite(img_num, layer, xpos)
+    x = 390 + xpos * 50
+    @out << {
+      'op' => 'img',
+      'layer' => "spr#{layer}",
+      'fn' => get_img_file(sprintf("tati_%06d.png", img_num)),
+      'x' => x,
+      'y' => 0,
+    }
+  end
+
   # [1, 1, 0, " ", "Now, it was finally the day of our date."]
   def op_say(args)
     expect_arg_count(args, 5)
@@ -86,12 +186,17 @@ class Bgi2StoryConverter
       ch = get_char_by_name(char)
       raise "unknown character: #{char.inspect}, got #{orig_to_char.inspect}" unless ch
 
-      voice_ch = ch['voice']
-      seq = @voice_seq[voice_ch] || 0
-      seq += 1
-      @voice_seq[voice_ch] = seq
+      if @voice_fn
+        voice_fn = @voice_fn
+        @voice_fn = nil
+      else
+        voice_ch = ch['voice']
+        seq = @voice_seq[voice_ch] || 0
+        seq += 1
+        @voice_seq[voice_ch] = seq
 
-      voice_fn = sprintf("voice/%s%s%03d0.ogg", voice_ch, @script_name, seq)
+        voice_fn = sprintf("voice/%s%s%03d0.ogg", voice_ch, @script_name, seq)
+      end
 
       if (txt[0] == '"' and txt[-1] == '"') or (txt[0] == '「' and txt[-1] == '」')
         txt = txt[1..-2]
@@ -121,7 +226,36 @@ class Bgi2StoryConverter
     expect_arg_count(args, 2)
     fade_time, fn = args
 
-    @out << {'op' => 'img', 'layer' => 'bg', 'fn' => "data02000.arc/#{fn}.png"}
+    @out << {
+      'op' => 'img',
+      'layer' => 'bg',
+      'fn' => get_img_file("#{fn}.png"),
+    }
+  end
+
+  # [1, 500, "aiy00010_bg01"]
+  def op_bg240(args)
+    expect_arg_count(args, 3)
+    _, fade_time, fn = args
+
+    h = {
+      'op' => 'img',
+      'layer' => 'bg',
+      'fn' => get_img_file("#{fn}.png"),
+    }
+
+    if fade_time > 0
+      h['a'] = 0
+      @out << h
+      @out << {
+        'op' => 'anim',
+        'layer' => 'bg',
+        'a' => 1,
+        't' => fade_time,
+      }
+    else
+      @out << h
+    end
   end
 
   # [1000, 0, 0, "mask001", "20vacantdlo"]
@@ -130,7 +264,7 @@ class Bgi2StoryConverter
     fade_time, a1, a2, mask_fn, fn = args
     (1..2).each { |i| expect_arg(args, i, 0) }
 
-    @out << {'op' => 'img', 'layer' => 'bg', 'fn' => "data02000.arc/#{fn}.png"}
+    @out << {'op' => 'img', 'layer' => 'bg', 'fn' => get_img_file("#{fn}.png")}
   end
 
   #sprite [1, 200, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "sak_25_bl_m", 0]
@@ -150,7 +284,7 @@ class Bgi2StoryConverter
 
     h = {
       'layer' => layer_id,
-      'fn' => "data02000.arc/#{fn}.png",
+      'fn' => get_img_file("#{fn}.png"),
       'x' => x_pos,
       'z' => z + 100,
     }
@@ -256,21 +390,28 @@ class Bgi2StoryConverter
   def expect_arg(args, i, val)
     raise "argument #{i} must be #{val.inspect}, it it is #{args[i].inspect} - see #{args.inspect}" unless args[i] == val
   end
+
+  def get_img_file(fn)
+    r = @img_to_fn[fn]
+    raise "Unable to find img #{fn} in asset dirs" unless r
+    r
+  end
 end
 
-if ARGV.size != 5
-  puts "Usage: bgi2story <meta.yaml> <characters.yaml> <lang> <in_script> <out_story>"
+if ARGV.size != 6
+  puts "Usage: bgi2story <meta.yaml> <characters.yaml> <lang> <asset_dir> <in_script> <out_story>"
   exit 1
 end
 
-meta_fn, chars_fn, lang, in_script, out_story = ARGV
+meta_fn, chars_fn, lang, asset_dir, in_script, out_story = ARGV
 
 cnv = Bgi2StoryConverter.new(
   in_script,
   YAML.load(File.read(meta_fn)),
   YAML.load(File.read(chars_fn)),
   lang,
-  nil
+  nil,
+  asset_dir
 )
 
 cnv.run
