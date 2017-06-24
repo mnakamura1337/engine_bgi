@@ -11,9 +11,12 @@ seq:
   - id: header_size
     type: u4
     doc: not including magic
-  - id: smth_hdr_0020
+  - id: num_namespaces
     type: u4
-    doc: usually zero
+  - id: namespaces
+    type: namespace
+    repeat: expr
+    repeat-expr: num_namespaces
   - id: num_subs
     type: u4
   - id: subs
@@ -26,6 +29,11 @@ instances:
     pos: header_size + 0x1C
     size-eos: true
 types:
+  namespace:
+    seq:
+      - id: name
+        type: strz
+        encoding: SJIS
   sub:
     seq:
       - id: name
