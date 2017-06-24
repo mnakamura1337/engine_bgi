@@ -8,7 +8,11 @@ require 'find'
 
 require_relative 'bgi_decompiler'
 
-require_relative 'converter_common'
+begin
+  require_relative 'converter_common'
+rescue LoadError
+  raise "converter_common.rb is missing, download it from https://github.com/mnakamura1337/engine_bgi/issues/1#issuecomment-233212660 and save it into 'bytecode/'"
+end
 
 class Bgi2StoryConverter
   include ExplicitChars
