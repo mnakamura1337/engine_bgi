@@ -407,14 +407,20 @@ end
 
 meta_fn, chars_fn, lang, asset_dir, in_script, out_story = ARGV
 
-cnv = Bgi2StoryConverter.new(
-  in_script,
-  YAML.load(File.read(meta_fn)),
-  YAML.load(File.read(chars_fn)),
-  lang,
-  nil,
-  asset_dir
-)
+cnv = nil
+
+File.open(meta_fn, 'r:bom|utf-8') { |meta_fd|
+  File.open(chars_fn, 'r:bom|utf-8') { |chars_fd|
+    cnv = Bgi2StoryConverter.new(
+      in_script,
+      YAML.load(meta_fd.read()),
+      YAML.load(chars_fd.read()),
+      lang,
+      nil,
+      asset_dir
+    )
+  }
+}
 
 cnv.run
 
