@@ -43,6 +43,9 @@ class BGIDecompiler
     @sub_by_addr = {}
     begin
       @bs = BgiCompiledScript.from_file(filename)
+      if !@bs.respond_to?(:_debug)
+        raise ".ksy templates must be compiled with --debug (using :start offset info)"
+      end
       @bs._read
 
       # Create sub addr => name mapping
@@ -52,6 +55,7 @@ class BGIDecompiler
 
       @b = @bs.body
     rescue Kaitai::Struct::Stream::UnexpectedDataError => e
+      print e
       # It's not a BgiCompiledScript, try raw bytecode
       @bs = nil
       @b = BgiBytecode.from_file(filename)

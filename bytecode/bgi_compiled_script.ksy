@@ -1,26 +1,39 @@
 meta:
   id: bgi_compiled_script
+  imports:
+    - bgi_bytecode
   application: BGI (Buriko General Interpreter)
   endian: le
 seq:
   - id: magic
-    contents: [
-      "BurikoCompiledScriptVer1.00", 0,
-      0x14, 2, 0, 0,
-      0, 0, 0, 0,
-    ]
+    contents: [ "BurikoCompiledScriptVer1.00", 0 ]
+    doc: VER100 header ft. subs table
+  - id: header_size
+    type: u4
+    doc: not including magic
+  - id: num_namespaces
+    type: u4
+  - id: namespaces
+    type: namespace
+    repeat: expr
+    repeat-expr: num_namespaces
   - id: num_subs
     type: u4
   - id: subs
     type: sub
     repeat: expr
     repeat-expr: num_subs
-  - id: padding
-    size: 14
-  - id: body
+instances:
+  body:
     type: bgi_bytecode
+    pos: header_size + 0x1C
     size-eos: true
 types:
+  namespace:
+    seq:
+      - id: name
+        type: strz
+        encoding: SJIS
   sub:
     seq:
       - id: name
